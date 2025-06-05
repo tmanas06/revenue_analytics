@@ -26,8 +26,14 @@ if uploaded_file is not None:
         if not fy_cols:
             st.error("No financial year columns found. Please ensure your file has columns starting with 'FY'.")
         else:
-            # Clean data
+            # Clean and prepare data
             required_columns = ['Department', 'Tax/Non-Tax']
+            has_state = 'State' in df.columns
+                    
+            # Update required columns based on state presence
+            if has_state:
+                required_columns.append('State')
+                    
             missing_columns = [col for col in required_columns if col not in df.columns]
             
             if missing_columns:
@@ -45,6 +51,20 @@ if uploaded_file is not None:
                 
                 # Sidebar controls
                 st.sidebar.header("Chart Controls")
+                
+                # State filter (if state column exists)
+                if has_state:
+                    all_states = sorted(df['State'].unique())
+                    selected_states = st.sidebar.multiselect(
+                        "Select States",
+                        options=all_states,
+                        default=all_states[:min(5, len(all_states))],  # Default to first 5 states
+                        help="Filter data by state"
+                    )
+                    
+                    # Apply state filter if any states are selected
+                    if selected_states:
+                        df = df[df['State'].isin(selected_states)]
                 
                 # Financial year selection
                 selected_fy = st.sidebar.selectbox(
@@ -72,24 +92,33 @@ if uploaded_file is not None:
                 )
                 
                 # Apply department filter if any are selected
-                if selected_depts:
-                    filtered_df = df[df['Department'].isin(selected_depts)]
-                else:
-                    filtered_df = df
+                filtered_df = df[df['Department'].isin(selected_depts)] if selected_depts else df
+                
+                # Prepare path for sunburst based on available columns
+                path_columns = []
+                if has_state and len(df['State'].unique()) > 1:
+                    path_columns.append('State')
+                path_columns.extend(['Tax/Non-Tax', 'Department'])
+                
+                # Create a new column for consistent coloring (Tax/Non-Tax)
+                filtered_df['Revenue_Type'] = filtered_df['Tax/Non-Tax'].apply(
+                    lambda x: 'Tax' if 'tax' in str(x).lower() or 'gst' in str(x).lower() else 'Non-Tax'
+                )
                 
                 # Create the sunburst chart
                 fig = px.sunburst(
                     filtered_df,
-                    path=['Tax/Non-Tax', 'Department'],
+                    path=path_columns,
                     values=selected_fy,
-                    color='Tax/Non-Tax',
+                    color='Revenue_Type',  # Use the new column for coloring
                     color_discrete_map={
-                        'Tax': '#4B78B2',  # Blue for Tax
+                        'Tax': '#4B78B2',    # Blue for all tax types
                         'Non-Tax': '#F6A756'  # Orange for Non-Tax
                     },
                     maxdepth=depth_level,
                     title=f"Revenue Composition - {selected_fy}",
-                    height=800
+                    height=800,
+                    hover_data={'Revenue_Type': False}  # Hide the Revenue_Type from hover
                 )
                 
                 # Customize the layout
@@ -125,8 +154,15 @@ if uploaded_file is not None:
                 
                 # Data table
                 st.subheader("Detailed View")
+                
+                # Prepare columns for display
+                display_columns = ['Department', 'Tax/Non-Tax']
+                if has_state:
+                    display_columns.insert(0, 'State')
+                display_columns.append(selected_fy)
+                
                 st.dataframe(
-                    filtered_df[['Department', 'Tax/Non-Tax', selected_fy]].sort_values(
+                    filtered_df[display_columns].sort_values(
                         by=selected_fy, ascending=False
                     ).reset_index(drop=True),
                     column_config={
@@ -144,15 +180,23 @@ else:
     st.info("Please upload an Excel file to begin analysis.")
     st.markdown("""
     ### Expected File Format:
-    - One row per department
+    - One row per department (and state, if applicable)
     - Columns for each financial year (e.g., FY2020, FY2021, FY2022)
     - A 'Department' column
     - A 'Tax/Non-Tax' column with values 'Tax' or 'Non-Tax'
+    - (Optional) A 'State' column for state-wise analysis
     - Numeric values in the financial year columns
     
-    ### Example Structure:
+    ### Example Structure (with State):
+    | State | Department | Tax/Non-Tax | FY2020 | FY2021 | FY2022 |
+    |-------|------------|-------------|--------|--------|--------|
+    | MH   | Sales Tax  | Tax         | 100    | 120    | 150    |
+    | MH   | Grants     | Non-Tax     | 50     | 60     | 70     |
+    | KA   | Sales Tax  | Tax         | 80     | 90     | 110    |
+    
+    ### Example Structure (without State):
     | Department | Tax/Non-Tax | FY2020 | FY2021 | FY2022 |
     |------------|-------------|--------|--------|--------|
-    | Sales Tax  | Tax         | 100    | 120    | 150    |
+    | Sales Tax  | Tax         | 180    | 210    | 260    |
     | Grants     | Non-Tax     | 50     | 60     | 70     |
     """)
