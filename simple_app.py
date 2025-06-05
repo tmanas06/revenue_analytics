@@ -55,12 +55,68 @@ if uploaded_file is not None:
                 # State filter (if state column exists)
                 if has_state:
                     all_states = sorted(df['State'].unique())
-                    selected_states = st.sidebar.multiselect(
-                        "Select States",
-                        options=all_states,
-                        default=all_states[:min(5, len(all_states))],  # Default to first 5 states
-                        help="Filter data by state"
+                    
+                    # Add option to select single state for pie chart
+                    show_pie = st.sidebar.checkbox(
+                        "Show Pie Chart for Single State",
+                        value=False,
+                        help="Check to show a pie chart for a single state"
                     )
+                    
+                    if show_pie and len(all_states) > 0:
+                        # Show single state selector for pie chart
+                        selected_state = st.sidebar.selectbox(
+                            "Select State for Pie Chart",
+                            options=all_states,
+                            index=0
+                        )
+                        selected_states = [selected_state]
+                        
+                        # Create a pie chart for the selected state
+                        state_data = df[df['State'] == selected_state]
+                        if not state_data.empty:
+                            st.subheader(f"Revenue Distribution - {selected_state}")
+                            
+                            # Aggregate by department for the selected state
+                            pie_data = state_data.groupby('Department')[selected_fy].sum().reset_index()
+                            pie_data = pie_data.sort_values(by=selected_fy, ascending=False)
+                            
+                            # Create two columns for layout
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                # Create pie chart
+                                fig_pie = px.pie(
+                                    pie_data,
+                                    names='Department',
+                                    values=selected_fy,
+                                    title=f"{selected_fy} Revenue by Department",
+                                    height=500
+                                )
+                                st.plotly_chart(fig_pie, use_container_width=True)
+                            
+                            with col2:
+                                # Show data table
+                                st.subheader("Department-wise Revenue")
+                                st.dataframe(
+                                    pie_data.rename(columns={selected_fy: 'Revenue'}).sort_values(
+                                        'Revenue', ascending=False
+                                    ),
+                                    column_config={
+                                        'Revenue': st.column_config.NumberColumn(
+                                            format="₹%.2f Cr"
+                                        )
+                                    },
+                                    height=500
+                                )
+                    else:
+                        # Show multi-select for states
+                        selected_states = st.sidebar.multiselect(
+                            "Select States",
+                            options=all_states,
+                            default=all_states[:min(5, len(all_states))],  # Default to first 5 states
+                            help="Filter data by state"
+                        )
                     
                     # Apply state filter if any states are selected
                     if selected_states:
@@ -105,21 +161,55 @@ if uploaded_file is not None:
                     lambda x: 'Tax' if 'tax' in str(x).lower() or 'gst' in str(x).lower() else 'Non-Tax'
                 )
                 
-                # Create the sunburst chart
-                fig = px.sunburst(
-                    filtered_df,
-                    path=path_columns,
-                    values=selected_fy,
-                    color='Revenue_Type',  # Use the new column for coloring
-                    color_discrete_map={
-                        'Tax': '#4B78B2',    # Blue for all tax types
-                        'Non-Tax': '#F6A756'  # Orange for Non-Tax
-                    },
-                    maxdepth=depth_level,
-                    title=f"Revenue Composition - {selected_fy}",
-                    height=800,
-                    hover_data={'Revenue_Type': False}  # Hide the Revenue_Type from hover
-                )
+                # Only show sunburst if not in single-state pie chart mode or if no states are selected
+                if not has_state or not show_pie or len(selected_states) != 1:
+                    # Create the sunburst chart
+                    fig = px.sunburst(
+                        filtered_df,
+                        path=path_columns,
+                        values=selected_fy,
+                        color='Revenue_Type',  # Use the new column for coloring
+                        color_discrete_map={
+                            'Tax': '#4B78B2',    # Blue for all tax types
+                            'Non-Tax': '#F6A756'  # Orange for Non-Tax
+                        },
+                        maxdepth=depth_level,
+                        title=f"Revenue Composition - {selected_fy}",
+                        height=800,
+                        hover_data={'Revenue_Type': False}  # Hide the Revenue_Type from hover
+                    )
+                    
+                    # Display the sunburst chart
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.subheader("Sunburst Chart")
+                    st.info("Sunburst chart is hidden when viewing a single state's pie chart. Uncheck 'Show Pie Chart for Single State' to see the sunburst chart.")
+                    
+                    # Add a summary of the selected state's data
+                    state_summary = filtered_df[filtered_df['State'].isin(selected_states)]
+                    if not state_summary.empty:
+                        st.subheader(f"Summary for {selected_states[0]}")
+                        
+                        # Calculate totals
+                        total_revenue = state_summary[selected_fy].sum()
+                        tax_revenue = state_summary[state_summary['Revenue_Type'] == 'Tax'][selected_fy].sum()
+                        non_tax_revenue = total_revenue - tax_revenue
+                        
+                        # Display metrics
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Total Revenue", f"₹{total_revenue:,.2f} Cr")
+                        with col2:
+                            st.metric("Tax Revenue", f"₹{tax_revenue:,.2f} Cr", 
+                                    f"{tax_revenue/total_revenue*100:.1f}%" if total_revenue > 0 else "0%")
+                        with col3:
+                            st.metric("Non-Tax Revenue", f"₹{non_tax_revenue:,.2f} Cr", 
+                                    f"{non_tax_revenue/total_revenue*100:.1f}%" if total_revenue > 0 else "0%")
+                        
+                        # Show top departments
+                        st.subheader("Top Departments by Revenue")
+                        top_depts = state_summary.groupby('Department')[selected_fy].sum().nlargest(5)
+                        st.bar_chart(top_depts)
                 
                 # Customize the layout
                 fig.update_layout(
